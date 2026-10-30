@@ -143,6 +143,12 @@ h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.01em}
 .btn.sm{height:40px;padding:0 14px;font-size:14px;border-radius:10px;flex:none}
 .opt{display:flex;align-items:center;gap:12px;padding:12px 14px}
 .opt+.opt{border-top:1px solid var(--line2)}
+.lead{margin:-6px 0 0;font-size:15px;line-height:1.45;color:var(--ink)}
+.dup{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.dup+.dup{border-top:1px solid var(--line2)}
+.dup .t{flex:1;min-width:0}
+.dup b{display:block;font-size:15px;font-weight:800}
+.dup small{display:block;font-size:12px;color:var(--muted);margin-top:1px}
 .steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:12px;font-size:15px;line-height:1.45}
 .code{font-size:22px;font-weight:800;letter-spacing:.06em;text-align:center;padding:14px;background:var(--bg);border-radius:12px;user-select:all}
 
@@ -378,10 +384,36 @@ function onCatalog(p) {
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const catalogByName = (n) => S.catalog.find((c) => norm(c.name) === norm(n));
 const onListByName = (n) => S.items.find((x) => norm(x.name) === norm(n));
+const squash = (s) => norm(s).replace(/[^a-z0-9\u0C00-\u0C7F]/g, '');
+// The English name and the bracketed local name are each matched on their own.
+// Spelling-tolerant form: toor/tur, dhal/dal, jeera/jira, pappu/papu all collapse together.
+const phon = (s) => squash(s).replace(/oo|ou/g, 'u').replace(/ee|ie/g, 'i').replace(/([bdgkpt])h/g, '$1').replace(/(.)\1+/g, '$1');
+const nameParts = (n) => [n, ...String(n).split(/[()]/)].map(phon).filter((x) => x.length >= 2);
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 3) return 9;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// Is `q` probably the same thing as catalog name `n`?
+function sameItem(q, n) {
+  const a = phon(q); if (a.length < 3) return false;
+  return nameParts(n).some((p) => {
+    if (p === a) return true;
+    if (p.length >= 4 && a.length >= 4 && (p.includes(a) || a.includes(p))) return true;
+    const tol = Math.min(p.length, a.length) >= 8 ? 2 : Math.min(p.length, a.length) >= 5 ? 1 : 0;
+    return tol > 0 && editDistance(a, p) <= tol;
+  });
+}
+const similarItems = (q) => S.catalog.filter((c) => sameItem(q, c.name));
 function catalogMatches(q) {
   const t = norm(q);
   const words = t.split(' ').filter(Boolean);
-  const list = S.catalog.filter((c) => { const n = norm(c.name); return words.every((w) => n.includes(w)); });
+  const list = S.catalog.filter((c) => { const n = norm(c.name); return words.every((w) => n.includes(w)) || sameItem(t, c.name); });
   return list.sort((a, b) => {
     const as = norm(a.name).startsWith(t) ? 0 : 1, bs = norm(b.name).startsWith(t) ? 0 : 1;
     return as - bs || a.name.localeCompare(b.name);
@@ -526,9 +558,17 @@ function openAdd() {
   S.q = ''; S.form = null; S.sheet = 'search'; renderSheet();
   setTimeout(() => { const el = $('s-q'); if (el) el.focus(); }, 220);
 }
+// Before creating a new item, check whether we already have it (same or close spelling).
+function checkNew(name, then) {
+  const exactOnList = onListByName(name);
+  const sims = similarItems(name).filter((c) => norm(c.name) !== norm(name) || !exactOnList);
+  if (!exactOnList && !sims.length) return then();
+  S.dup = { name, then, onList: exactOnList ? exactOnList.id : null, matches: sims.slice(0, 4) };
+  S.sheet = 'dup'; renderSheet();
+}
 function openNewItem(name) {
   const last = LS.get('lastForm', { unit: 'kg', category: 'Grains & dal' });
-  S.form = { id: null, name: name || '', qty: '', unit: last.unit, price: '', category: last.category, repeat: true, fromSearch: true };
+  S.form = { id: null, name: name || '', qty: '', unit: last.unit, price: '', category: last.category, repeat: true, fromSearch: true, checked: !!name };
   S.sheet = 'item'; renderSheet();
   setTimeout(() => { const el = $(name ? 'f-qty' : 'f-name'); if (el) el.focus(); }, 220);
 }
@@ -557,7 +597,10 @@ async function saveItem() {
       S.banner = `You updated ${data.name} · synced to everyone`;
       rememberInCatalog(data).catch(() => {});
     } else {
-      if (onListByName(row.name)) { S.busy = false; return toast(`${row.name} is already on this month’s list`); }
+      if (!f.checked) {
+        S.busy = false;
+        return checkNew(row.name, () => { f.checked = true; S.sheet = 'item'; renderSheet(); saveItem(); });
+      }
       const mid = curMonth() ? curMonth().id : await ensureMonth();
       const { data, error } = await client().from('gr_items')
         .insert({ ...row, household_code: S.hh, month_id: mid, created_by: S.me }).select().single();
@@ -907,8 +950,36 @@ function renderSheet() {
   const el = $('sheet'); if (!el) return;
   if (!S.sheet) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="scrim"><button class="close" data-act="close" aria-label="Close"></button>
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t"><span class="grab"></span>${S.sheet === 'item' ? itemSheet() : S.sheet === 'search' ? searchSheet() : S.sheet === 'install' ? installSheet() : familySheet()}</div></div>`;
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t"><span class="grab"></span>${S.sheet === 'item' ? itemSheet() : S.sheet === 'search' ? searchSheet() : S.sheet === 'install' ? installSheet() : S.sheet === 'dup' ? dupSheet() : familySheet()}</div></div>`;
   if (S.sheet === 'search') renderResults();
+}
+function showOnList(itemId) {
+  S.dup = null; S.sheet = null; S.form = null; renderSheet();
+  const el = document.querySelector(`.item[data-id="${itemId}"]`);
+  if (el) { el.classList.add('fresh'); el.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(() => el.classList.remove('fresh'), 1800); }
+}
+function dupSheet() {
+  const d = S.dup;
+  const mon = shortMonth(S.month);
+  const row = (c) => {
+    const it = onListByName(c.name);
+    const price = Number(c.price);
+    return `<div class="dup">
+      <span class="t"><b>${esc(c.name)}</b><small>${esc(c.qty)} ${esc(c.unit)} · ${esc(c.category)}${price ? ' · ' + rupees(price) : ''}${it ? ` · already on ${esc(mon)}’s list` : ''}</small></span>
+      ${it ? `<button class="btn line sm" data-act="dup-show" data-id="${it.id}">Show</button>`
+           : `<button class="btn sm" data-act="dup-use" data-id="${c.id}">Use this</button>`}
+    </div>`;
+  };
+  const head = d.onList && !d.matches.length
+    ? `<h2 id="sh-t">Already on the list</h2><p class="lead"><b>${esc(d.name)}</b> is already on ${esc(mon)}’s list.</p>`
+    : `<h2 id="sh-t">Already in our items</h2><p class="lead">We already have ${d.matches.length > 1 ? 'items' : 'an item'} like <b>“${esc(d.name)}”</b>. Do you want to use ${d.matches.length > 1 ? 'one of these' : 'that'}?</p>`;
+  return `${head}
+    ${d.matches.length ? `<div class="card">${d.matches.map(row).join('')}</div>` : ''}
+    ${d.onList && !d.matches.length ? `<button class="btn block" data-act="dup-show" data-id="${d.onList}">Show it on the list</button>` : ''}
+    <div class="grid3" style="gap:10px">
+      <button class="btn line" data-act="dup-back">Back</button>
+      <button class="btn line" style="grid-column:span 2" data-act="dup-new">Add “${esc(d.name.length > 18 ? d.name.slice(0, 17) + '…' : d.name)}” as new</button>
+    </div>`;
 }
 function installSheet() {
   const share = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
@@ -1038,7 +1109,16 @@ document.addEventListener('click', (e) => {
     case 'edit': return openEdit(id);
     case 'add': return openAdd();
     case 'pick': return addFromCatalog(id);
-    case 'new': return openNewItem((S.q || '').trim());
+    case 'new': { const q = (S.q || '').trim(); return checkNew(q, () => openNewItem(q)); }
+    case 'dup-use': {
+      const c = S.catalog.find((x) => x.id === id);
+      S.sheet = 'search'; S.q = ''; S.form = null; renderSheet();
+      if (c && onListByName(c.name)) { const it = onListByName(c.name); return showOnList(it.id); }
+      return addFromCatalog(id);
+    }
+    case 'dup-show': return showOnList(id);
+    case 'dup-new': { const d = S.dup; S.dup = null; return d && d.then(); }
+    case 'dup-back': S.dup = null; if (S.form) { S.sheet = 'item'; } else { S.sheet = 'search'; } return renderSheet();
     case 'back': S.sheet = 'search'; S.form = null; renderSheet(); return setTimeout(() => { const el = $('s-q'); if (el) el.focus(); }, 50);
     case 'ours': return startOurItems();
     case 'close': return closeSheet();
@@ -1070,6 +1150,7 @@ document.addEventListener('input', (e) => {
   let v = e.target.value;
   if (k === 'qty' || k === 'price') { v = v.replace(/[^0-9.]/g, ''); if (v !== e.target.value) e.target.value = v; }
   S.form[k] = v;
+  if (k === 'name') S.form.checked = false;
   if (k === 'name') { const s = document.querySelector('[data-act="save"]'); if (s) s.setAttribute('aria-disabled', String(!v.trim())); }
 });
 document.addEventListener('keydown', (e) => {
@@ -1084,7 +1165,7 @@ document.addEventListener('keydown', (e) => {
     const exact = catalogByName(q), hits = catalogMatches(q);
     const pick = exact || (hits.length === 1 ? hits[0] : null);
     if (pick && !onListByName(pick.name)) { addFromCatalog(pick.id); S.q = ''; e.target.value = ''; renderResults(); }
-    else if (!exact && !hits.length) openNewItem(q);
+    else if (!exact && !hits.length) checkNew(q, () => openNewItem(q));
   }
   else if (S.form && ['f-name', 'f-qty', 'f-price'].includes(id)) { e.preventDefault(); saveItem(); }
 });
