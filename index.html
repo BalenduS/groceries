@@ -117,6 +117,24 @@ h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.01em}
 .mem{display:flex;align-items:center;gap:12px;padding:10px 0}
 .mem+.mem{border-top:1px solid var(--line2)}
 .mem .av{width:36px;height:36px;font-size:13px;border:none}
+.search{display:flex;align-items:center;gap:10px;height:52px;padding:0 14px;border:1.5px solid var(--chip);border-radius:14px;background:#fff;color:var(--muted)}
+.search:focus-within{border-color:var(--accent)}
+.search input{flex:1;min-width:0;border:none;outline:none;font-size:16px;font-weight:600;color:var(--ink);background:transparent;height:100%}
+.sres{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow-y:auto;max-height:46dvh;min-height:120px}
+.sres:empty{display:none}
+.res{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:8px 14px;border:none;background:#fff;text-align:left}
+.res+.res{border-top:1px solid var(--line2)}
+.res .t{flex:1;min-width:0}
+.res b{display:block;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.res small{display:block;font-size:12px;color:var(--muted);font-weight:500;margin-top:1px}
+.res .act{flex:none;min-width:36px;height:36px;padding:0 8px;border-radius:10px;background:var(--soft);color:var(--accent);display:flex;align-items:center;justify-content:center;gap:4px;font-size:12px;font-weight:800}
+.res.on{background:#FAFBF8;cursor:default}
+.res.on b{color:var(--muted)}
+.res.on .act{background:transparent;color:var(--accent)}
+.res.on .act svg{stroke:var(--accent)}
+.res.new{background:var(--soft)}
+.res.new .plus{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.hint{margin:0;padding:14px;font-size:13px;color:var(--muted);text-align:center}
 .code{font-size:22px;font-weight:800;letter-spacing:.06em;text-align:center;padding:14px;background:var(--bg);border-radius:12px;user-select:all}
 
 /* onboarding */
@@ -179,6 +197,7 @@ const I = {
   check: '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>',
   plus: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   copy: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  search: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   x: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   list: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
   blank: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>',
@@ -191,7 +210,7 @@ const S = {
   members: [], months: [], items: [], month: monthKey(new Date()),
   stage: 'boot', authStep: 'email', authEmail: LS.get('authEmail', ''),
   joinCode: null, sheet: null, form: null, banner: null, online: [], connected: false,
-  fresh: null, busy: false,
+  fresh: null, busy: false, catalog: [], q: '', adding: null,
 };
 let sb = null, chan = null;
 function client() {
@@ -245,13 +264,15 @@ async function loadMembership() {
 
 async function loadHousehold() {
   const c = client();
-  const [mem, mon, hh] = await Promise.all([
+  const [mem, mon, hh, cat] = await Promise.all([
     c.from('gr_members').select('*').eq('household_code', S.hh).order('created_at'),
     c.from('gr_months').select('*').eq('household_code', S.hh).order('month'),
     c.from('gr_households').select('*').eq('code', S.hh).maybeSingle(),
+    c.from('gr_catalog').select('*').eq('household_code', S.hh).order('name'),
   ]);
   if (mem.error || mon.error) { S.stage = 'error'; S.err = (mem.error || mon.error).message; return render(); }
   S.members = mem.data; S.months = mon.data; S.hhName = hh.data ? hh.data.name : 'Home';
+  S.catalog = cat.error ? [] : cat.data;
   // Open the latest month that already has a list (if it's this month or later), else this month.
   const now = monthKey(new Date());
   const ahead = S.months.filter((m) => m.month >= now).map((m) => m.month);
@@ -278,6 +299,7 @@ function subscribe() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'gr_items', filter: 'household_code=eq.' + S.hh }, onItem)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'gr_months', filter: 'household_code=eq.' + S.hh }, onMonth)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'gr_members', filter: 'household_code=eq.' + S.hh }, onMember)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'gr_catalog', filter: 'household_code=eq.' + S.hh }, onCatalog)
     .on('presence', { event: 'sync' }, () => {
       S.online = Object.keys(chan.presenceState());
       renderHeader();
@@ -332,6 +354,74 @@ function onMember(p) {
     if (!has && p.new.id !== S.me) announce(`${p.new.name} joined the family list`);
   }
   renderHeader(); if (S.sheet === 'family') renderSheet();
+}
+function onCatalog(p) {
+  if (p.eventType === 'DELETE') S.catalog = S.catalog.filter((c) => c.id !== (p.old && p.old.id));
+  else {
+    const has = S.catalog.find((c) => c.id === p.new.id);
+    S.catalog = has ? S.catalog.map((c) => (c.id === p.new.id ? p.new : c)) : [...S.catalog, p.new];
+  }
+  if (S.sheet === 'search') renderResults();
+}
+
+// ------------------------------------------------------------------ catalog (our usual items)
+const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const catalogByName = (n) => S.catalog.find((c) => norm(c.name) === norm(n));
+const onListByName = (n) => S.items.find((x) => norm(x.name) === norm(n));
+function catalogMatches(q) {
+  const t = norm(q);
+  const words = t.split(' ').filter(Boolean);
+  const list = S.catalog.filter((c) => { const n = norm(c.name); return words.every((w) => n.includes(w)); });
+  return list.sort((a, b) => {
+    const as = norm(a.name).startsWith(t) ? 0 : 1, bs = norm(b.name).startsWith(t) ? 0 : 1;
+    return as - bs || a.name.localeCompare(b.name);
+  });
+}
+// Keep the catalog's defaults in step with what was last saved for an item.
+async function rememberInCatalog(row) {
+  const fields = { name: row.name, qty: row.qty, unit: row.unit, category: row.category, price: row.price };
+  const hit = catalogByName(row.name);
+  if (hit) {
+    if (['qty', 'unit', 'category'].every((k) => String(hit[k]) === String(fields[k])) && Number(hit.price) === Number(fields.price)) return;
+    const { data } = await client().from('gr_catalog').update(fields).eq('id', hit.id).select().single();
+    if (data) S.catalog = S.catalog.map((c) => (c.id === data.id ? data : c));
+  } else {
+    const { data } = await client().from('gr_catalog').insert({ ...fields, household_code: S.hh }).select().single();
+    if (data && !S.catalog.find((c) => c.id === data.id)) S.catalog = [...S.catalog, data];
+  }
+}
+async function addFromCatalog(id) {
+  const c = S.catalog.find((x) => x.id === id);
+  if (!c || onListByName(c.name) || S.adding) return;
+  S.adding = id; renderResults();
+  try {
+    const mid = curMonth() ? curMonth().id : await ensureMonth();
+    const { data, error } = await client().from('gr_items').insert({
+      household_code: S.hh, month_id: mid, name: c.name, qty: c.qty, unit: c.unit, category: c.category,
+      price: c.price, repeat: true, created_by: S.me, updated_by: S.me,
+    }).select().single();
+    if (error) throw error;
+    if (!S.items.find((x) => x.id === data.id)) S.items = [...S.items, data];
+    S.banner = `You added ${data.name} · synced to everyone`;
+    renderList(); renderFooter(); renderHeader(); renderBanner();
+  } catch (e) { fail(e, 'Not added'); }
+  S.adding = null; renderResults();
+}
+async function startOurItems() {
+  if (S.busy || !S.catalog.length) return;
+  S.busy = true; renderList();
+  try {
+    const mid = await ensureMonth();
+    const t = Date.now();
+    const rows = [...S.catalog].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name))
+      .filter((c) => !onListByName(c.name))
+      .map((c, i) => ({ household_code: S.hh, month_id: mid, name: c.name, qty: c.qty, unit: c.unit, category: c.category, price: c.price,
+        repeat: true, created_by: S.me, updated_by: S.me, created_at: new Date(t + i).toISOString() }));
+    if (rows.length) { const { error } = await client().from('gr_items').insert(rows); if (error) throw error; }
+    await loadItems();
+    S.banner = `Added ${rows.length} of our usual items — tap any item to change or remove it`; renderBanner();
+  } catch (e) { fail(e, 'Could not start the list'); }
+  S.busy = false; renderList();
 }
 
 function announce(msg, itemId) {
@@ -417,10 +507,14 @@ async function toggle(id) {
 }
 
 function openAdd() {
+  S.q = ''; S.form = null; S.sheet = 'search'; renderSheet();
+  setTimeout(() => { const el = $('s-q'); if (el) el.focus(); }, 220);
+}
+function openNewItem(name) {
   const last = LS.get('lastForm', { unit: 'kg', category: 'Grains & dal' });
-  S.form = { id: null, name: '', qty: '', unit: last.unit, price: '', category: last.category, repeat: true };
+  S.form = { id: null, name: name || '', qty: '', unit: last.unit, price: '', category: last.category, repeat: true, fromSearch: true };
   S.sheet = 'item'; renderSheet();
-  setTimeout(() => { const el = $('f-name'); if (el) el.focus(); }, 220);
+  setTimeout(() => { const el = $(name ? 'f-qty' : 'f-name'); if (el) el.focus(); }, 220);
 }
 function openEdit(id) {
   const it = S.items.find((x) => x.id === id);
@@ -445,7 +539,9 @@ async function saveItem() {
       if (error) throw error;
       S.items = S.items.map((x) => (x.id === f.id ? data : x));
       S.banner = `You updated ${data.name} · synced to everyone`;
+      rememberInCatalog(data).catch(() => {});
     } else {
+      if (onListByName(row.name)) { S.busy = false; return toast(`${row.name} is already on this month’s list`); }
       const mid = curMonth() ? curMonth().id : await ensureMonth();
       const { data, error } = await client().from('gr_items')
         .insert({ ...row, household_code: S.hh, month_id: mid, created_by: S.me }).select().single();
@@ -454,6 +550,13 @@ async function saveItem() {
       S.fresh = data.id;
       S.banner = `You added ${data.name} · synced to everyone`;
       LS.set('lastForm', { unit: f.unit, category: f.category });
+      await rememberInCatalog(data).catch(() => {});
+      if (f.fromSearch) {
+        S.busy = false; S.form = null; S.q = ''; S.sheet = 'search';
+        renderList(); renderFooter(); renderHeader(); renderBanner(); renderSheet();
+        setTimeout(() => { const el = $('s-q'); if (el) el.focus(); }, 50);
+        return;
+      }
     }
     S.busy = false; closeSheet(); render();
   } catch (e) { S.busy = false; fail(e, 'Not saved'); }
@@ -645,7 +748,8 @@ function renderList() {
       <h2>${m ? 'This list is empty' : `No list for ${esc(shortMonth(S.month))} yet`}</h2>
       <p>${src ? `Start from ${esc(shortMonth(src.month))}’s list and edit on top, or build a new one.` : 'Start with the usual staples and set your own quantities and prices, or build it from scratch.'}</p>
       ${src ? `<button class="choice primary" data-act="copy" ${S.busy ? 'disabled' : ''}><span class="ic">${I.copy}</span><span><b>Copy ${esc(shortMonth(src.month))}’s list</b><small>Repeating items, quantities and prices carried over. Ticks are cleared.</small></span></button>` : ''}
-      <button class="choice ${src ? '' : 'primary'}" data-act="staples" ${S.busy ? 'disabled' : ''}><span class="ic">${I.list}</span><span><b>Start with common staples</b><small>${STAPLES.length} everyday items — rice, dal, oil, spices, cleaning…</small></span></button>
+      ${S.catalog.length ? `<button class="choice ${src ? '' : 'primary'}" data-act="ours" ${S.busy ? 'disabled' : ''}><span class="ic">${I.list}</span><span><b>Start from our usual items</b><small>All ${S.catalog.length} items we buy, with their usual quantity and price.</small></span></button>` : ''}
+      <button class="choice ${src || S.catalog.length ? '' : 'primary'}" data-act="staples" ${S.busy ? 'disabled' : ''}><span class="ic">${I.list}</span><span><b>Start with common staples</b><small>${STAPLES.length} everyday items — rice, dal, oil, spices, cleaning…</small></span></button>
       <button class="choice" data-act="blank" ${S.busy ? 'disabled' : ''}><span class="ic">${I.blank}</span><span><b>Start a blank list</b><small>Add items one by one.</small></span></button>
       ${S.busy ? '<div class="spin" role="status" aria-label="Working"></div>' : ''}
     </div>${srcCount}`;
@@ -696,7 +800,43 @@ function renderSheet() {
   const el = $('sheet'); if (!el) return;
   if (!S.sheet) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="scrim"><button class="close" data-act="close" aria-label="Close"></button>
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t"><span class="grab"></span>${S.sheet === 'item' ? itemSheet() : familySheet()}</div></div>`;
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t"><span class="grab"></span>${S.sheet === 'item' ? itemSheet() : S.sheet === 'search' ? searchSheet() : familySheet()}</div></div>`;
+  if (S.sheet === 'search') renderResults();
+}
+function searchSheet() {
+  return `<div class="row between">
+      <div style="display:flex;flex-direction:column;gap:2px"><h2 id="sh-t">Add items</h2>
+      <span style="font-size:13px;color:var(--muted)">${esc(monthName(S.month))} · tap to add, everyone sees it</span></div>
+      <button class="iconbtn" data-act="close" aria-label="Close">${I.x}</button>
+    </div>
+    <label class="search"><span class="sr">Search our items</span>${I.search}
+      <input id="s-q" type="search" value="${esc(S.q || '')}" placeholder="Search our items…" autocomplete="off" enterkeyhint="search">
+    </label>
+    <div id="sres" class="sres"></div>
+    <button class="btn block" data-act="close">Done</button>`;
+}
+function renderResults() {
+  const el = $('sres'); if (!el) return;
+  const q = (S.q || '').trim();
+  const hits = catalogMatches(q);
+  const exact = q && catalogByName(q);
+  const newRow = q && !exact ? `<button class="res new" data-act="new">
+      <span class="plus">${I.plus}</span>
+      <span class="t"><b>Add “${esc(q)}”</b><small>New item — set quantity, price and category</small></span></button>` : '';
+  if (!S.catalog.length && !q) {
+    el.innerHTML = `<p class="hint">Your usual items will show up here. Type a name to add the first one.</p>`;
+    return;
+  }
+  if (!hits.length) { el.innerHTML = newRow; return; }
+  const shown = hits.slice(0, 60);
+  el.innerHTML = shown.map((c) => {
+    const on = onListByName(c.name);
+    const price = Number(c.price);
+    const busy = S.adding === c.id;
+    return `<button class="res ${on ? 'on' : ''}" data-act="pick" data-id="${c.id}" ${on ? 'aria-disabled="true"' : ''} aria-label="${on ? esc(c.name) + ' is on the list' : 'Add ' + esc(c.name)}">
+      <span class="t"><b>${esc(c.name)}</b><small>${esc(c.qty)} ${esc(c.unit)} · ${esc(c.category)}${price ? ' · ' + rupees(price) : ''}</small></span>
+      <span class="act">${on ? I.check + ' On list' : busy ? '…' : I.plus}</span></button>`;
+  }).join('') + (hits.length > shown.length ? `<p class="hint">${hits.length - shown.length} more — keep typing to narrow down</p>` : '') + newRow;
 }
 function itemSheet() {
   const f = S.form;
@@ -722,7 +862,7 @@ function itemSheet() {
       <span class="track"><i></i></span>
     </button>
     <div class="grid3" style="gap:10px">
-      ${editing ? `<button class="btn danger" data-act="delete">Remove</button>` : `<button class="btn line" data-act="close">Cancel</button>`}
+      ${editing ? `<button class="btn danger" data-act="delete">Remove</button>` : f.fromSearch ? `<button class="btn line" data-act="back">Back</button>` : `<button class="btn line" data-act="close">Cancel</button>`}
       <button class="btn" style="grid-column:span 2" data-act="save" aria-disabled="${!f.name.trim()}">${editing ? 'Save' : 'Add to list'}</button>
     </div>`;
 }
@@ -770,6 +910,10 @@ document.addEventListener('click', (e) => {
     case 'toggle': return toggle(id);
     case 'edit': return openEdit(id);
     case 'add': return openAdd();
+    case 'pick': return addFromCatalog(id);
+    case 'new': return openNewItem((S.q || '').trim());
+    case 'back': S.sheet = 'search'; S.form = null; renderSheet(); return setTimeout(() => { const el = $('s-q'); if (el) el.focus(); }, 50);
+    case 'ours': return startOurItems();
     case 'close': return closeSheet();
     case 'unit': case 'cat':
       f[a === 'unit' ? 'unit' : 'category'] = b.dataset.v;
@@ -790,6 +934,7 @@ document.addEventListener('click', (e) => {
   }
 });
 document.addEventListener('input', (e) => {
+  if (e.target.id === 's-q') { S.q = e.target.value; return renderResults(); }
   const k = e.target.dataset && e.target.dataset.f;
   if (!k || !S.form) return;
   let v = e.target.value;
@@ -803,6 +948,14 @@ document.addEventListener('keydown', (e) => {
   const id = e.target.id;
   if (id === 'a-email') sendCode();
   else if (id === 'a-otp') verifyCode();
+  else if (id === 's-q') {
+    e.preventDefault();
+    const q = (S.q || '').trim(); if (!q) return;
+    const exact = catalogByName(q), hits = catalogMatches(q);
+    const pick = exact || (hits.length === 1 ? hits[0] : null);
+    if (pick && !onListByName(pick.name)) { addFromCatalog(pick.id); S.q = ''; e.target.value = ''; renderResults(); }
+    else if (!exact && !hits.length) openNewItem(q);
+  }
   else if (S.form && ['f-name', 'f-qty', 'f-price'].includes(id)) { e.preventDefault(); saveItem(); }
 });
 window.addEventListener('online', renderBanner);
